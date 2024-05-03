@@ -14,6 +14,7 @@ import (
 
 // Governor oversees all services and manages shutdown.
 type Governor interface {
+
 	// CatchSignals configures Governor to catch SIGINT (Ctrl+C)
 	// and other interrupt signals (SIGTERM, SIGHUP, SIGQUIT)
 	// and call Shutdown() when a signal is received.
@@ -22,6 +23,7 @@ type Governor interface {
 	// Restart configures a default restart policy for all services,
 	// which can be overridden on a per-service basis.
 	// The restart delay can be zero.
+	// Services never restart unless restart policy is set.
 	Restart(after time.Duration) Governor
 
 	// Add a service to Governor.
@@ -38,7 +40,7 @@ type Governor interface {
 	Shutdown()
 
 	// WaitForShutdown waits for all services to be stopped.
-	// It will not return before Shutdown() has been called.
+	// Caveat: will return immediately if no services have been started.
 	// This can be useful at the end of main()
 	WaitForShutdown()
 }
@@ -46,14 +48,17 @@ type Governor interface {
 // ServiceConfig allows you to configure a service when adding
 // it to the Governor.
 type ServiceConfig interface {
+
 	// Configure the name of the service for errors and logging.
 	Name(name string) ServiceConfig
 
 	// Restart the service if it stops.
 	// The restart delay can be zero.
+	// This overrides the Governor restart policy.
 	Restart(after time.Duration) ServiceConfig
 
-	// Prevent service restart (overrides Governor policy)
+	// Prevent service restart, to override Governor policy.
+	// Services never restart unless a restart policy is set.
 	NoRestart() ServiceConfig
 
 	// Start the service immediately.
@@ -64,6 +69,7 @@ type ServiceConfig interface {
 // ServiceAPI allows the service to call cancel-aware helpers
 // from the servce goroutine (or any child goroutine)
 type ServiceAPI interface {
+
 	// Get the cancelable context for this service.
 	// Pass this to blocking calls that take a Context.
 	Context() context.Context
@@ -76,26 +82,29 @@ type ServiceAPI interface {
 	Log(fmt string, args ...any)
 }
 
-// Service is the minimum interface required for a service.
+// Service interface is the minimum that a service must implement.
 type Service interface {
-	// Run starts the service running.
+
+	// Run is the main service goroutine.
 	//
-	// The Governor calls this on a new goroutine during the Add call.
-	// When Run() returns, the service will be considered stopped.
-	// The Governor also wraps this call with recover() and will
-	// catch any panic() and log the error, then stop the service.
+	// The Governor calls this on a new goroutine when the service
+	// is started. When Run() returns, the service will be considered
+	// stopped, and will be restarted if configured to do so.
+	// The Governor also wraps Run() calls with recover() and will
+	// catch any panic and log the error, then stop/restart the service.
 	//
 	// Run() should use the api.Context() with any blocking
 	// calls that take a Context, to support cancellation.
 	// Network connections do not use a Context for reads and writes
 	// (they do for Dial calls) so the service should implement the
-	// Stoppable interface to close any open connections.
-	// Use api.Sleep() to support cancellation.
+	// Stoppable interface to close any open net.Conn connections.
+	// Use api.Sleep() instead of time.Sleep() to support cancellation.
 	Run(api ServiceAPI)
 }
 
 // Stoppable allows a service to implement an optional Stop() handler.
 type Stoppable interface {
+
 	// Stop is called to request the service to stop.
 	//
 	// This is called when the Governor is trying to stop the
@@ -105,18 +114,20 @@ type Stoppable interface {
 	//       the service goroutine (may need a sync.Mutex)
 	//
 	// NOTE: be aware that this can be called while your service
-	//       is starting up (i.e. before Run() is called!)
+	//       is starting up (i.e. around the time Run() is called!)
 	//
-	// It can be used to e.g. close network sockets that the
+	// Stop can be used to e.g. close network sockets that the
 	// service might be blocking on (in Go, blocking network
 	// calls ignore Context cancellation, so this is necessary
 	// to interrupt those calls.)
 	Stop()
 }
 
-// StopImmediate is a sentinel value that can be used stop a service
-// from deep within a call stack: `panic(StopImmediate{})`
-type StopImmediate struct{}
+// StopService is a sentinel value that can be used stop a service
+// from deep within a call stack by calling panic(StopService{}).
+// Services are not stopped until they return from their Run() function;
+// this provides an escape hatch for large, complex services.
+type StopService struct{}
 
 type governor struct {
 	wg       sync.WaitGroup     // used to wait for all services to call Stopped()
@@ -129,8 +140,8 @@ type governor struct {
 	restart  bool
 }
 
-// NewGovernor creates a new Governor to manage services.
-func NewGovernor() Governor {
+// New creates a new Governor to manage services.
+func New() Governor {
 	ctx, cancel := context.WithCancel(context.Background())
 	g := &governor{
 		ctx: ctx, cancel: cancel,
@@ -266,7 +277,7 @@ func (c *service) service_run() {
 	defer func() {
 		if err := recover(); err != nil {
 			// don't log if the panic value is StopImmediate{}
-			if _, ok := err.(StopImmediate); ok {
+			if _, ok := err.(StopService); ok {
 				log.Printf("[%s] raised stop-immediate.\n", c.name)
 			} else {
 				log.Printf("[%s] crashed! error: %v\n", c.name, err)
