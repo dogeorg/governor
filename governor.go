@@ -79,7 +79,7 @@ type ServiceAPI interface {
 	Sleep(duration time.Duration) (cancelled bool)
 
 	// Log a message tagged with the service name.
-	Log(fmt string, args ...any)
+	Log(fmt string, args ...interface{})
 }
 
 // Service interface is the minimum that a service must implement.
@@ -299,7 +299,7 @@ func (c *service) Sleep(duration time.Duration) (cancelled bool) {
 	}
 }
 
-func (c *service) Log(fmt string, args ...any) {
+func (c *service) Log(fmt string, args ...interface{}) {
 	fmt = fmtlib.Sprintf("[%s] %s\n", c.name, fmt)
 	log.Printf(fmt, args...)
 }
