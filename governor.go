@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-// Governor oversees all services and manages shutdown
+// Governor oversees all services and manages shutdown.
 type Governor interface {
 	// CatchSignals configures Governor to catch SIGINT (Ctrl+C)
 	// and other interrupt signals (SIGTERM, SIGHUP, SIGQUIT)
@@ -76,7 +76,7 @@ type ServiceAPI interface {
 	Log(fmt string, args ...any)
 }
 
-// Service is the minimum interface required for a service
+// Service is the minimum interface required for a service.
 type Service interface {
 	// Run starts the service running.
 	//
@@ -94,7 +94,7 @@ type Service interface {
 	Run(api ServiceAPI)
 }
 
-// Stoppable allows a service to implement an optional Stop() handler
+// Stoppable allows a service to implement an optional Stop() handler.
 type Stoppable interface {
 	// Stop is called to request the service to stop.
 	//
