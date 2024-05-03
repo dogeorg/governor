@@ -1,3 +1,4 @@
+// Package governor provides a service management utility.
 package governor
 
 import (
@@ -13,10 +14,51 @@ import (
 
 // Governor oversees all services and manages shutdown
 type Governor interface {
-	Add(svc Service, name string)
-	CatchSignals()
+	// CatchSignals configures Governor to catch SIGINT (Ctrl+C)
+	// and other interrupt signals (SIGTERM, SIGHUP, SIGQUIT)
+	// and call Shutdown() when a signal is received.
+	CatchSignals() Governor
+
+	// Restart configures a default restart policy for all services,
+	// which can be overridden on a per-service basis.
+	// The restart delay can be zero.
+	Restart(after time.Duration) Governor
+
+	// Add a service to Governor.
+	// Returns a ServiceConfig interface to allow configuring and
+	// starting the service.
+	Add(svc Service) ServiceConfig
+
+	// Start all added services.
+	// Does not affect services that have already been started.
+	Start()
+
+	// Shutdown stops all services.
+	// This call blocks until all services have stopped.
 	Shutdown()
+
+	// WaitForShutdown waits for all services to be stopped.
+	// It will not return before Shutdown() has been called.
+	// This can be useful at the end of main()
 	WaitForShutdown()
+}
+
+// ServiceConfig allows you to configure a service when adding
+// it to the Governor.
+type ServiceConfig interface {
+	// Configure the name of the service for errors and logging.
+	Name(name string) ServiceConfig
+
+	// Restart the service if it stops.
+	// The restart delay can be zero.
+	Restart(after time.Duration) ServiceConfig
+
+	// Prevent service restart (overrides Governor policy)
+	NoRestart() ServiceConfig
+
+	// Start the service immediately.
+	// No more configuration is possible after calling Start()
+	Start()
 }
 
 // ServiceAPI allows the service to call cancel-aware helpers
@@ -52,7 +94,7 @@ type Service interface {
 	Run(api ServiceAPI)
 }
 
-// Stoppable allows a service to implement a Stop() handler
+// Stoppable allows a service to implement an optional Stop() handler
 type Stoppable interface {
 	// Stop is called to request the service to stop.
 	//
@@ -72,18 +114,22 @@ type Stoppable interface {
 	Stop()
 }
 
-// StopNow is a sentinel value that can stop a service: panic(StopNow{})
-type StopNow struct{}
+// StopImmediate is a sentinel value that can be used stop a service
+// from deep within a call stack: `panic(StopImmediate{})`
+type StopImmediate struct{}
 
 type governor struct {
 	wg       sync.WaitGroup     // used to wait for all services to call Stopped()
 	ctx      context.Context    // root context for new services
 	cancel   context.CancelFunc // used to cancel all service contexts
 	mutex    sync.Mutex         // protects the following members:
-	services []Service
+	services []*service
+	delay    time.Duration
 	stopping bool
+	restart  bool
 }
 
+// NewGovernor creates a new Governor to manage services.
 func NewGovernor() Governor {
 	ctx, cancel := context.WithCancel(context.Background())
 	g := &governor{
@@ -92,37 +138,7 @@ func NewGovernor() Governor {
 	return g
 }
 
-// Add a new Service and start it running.
-// This can be called from any goroutine.
-func (g *governor) Add(svc Service, name string) {
-	// protect against a race with Shutdown(), which can be
-	// called from the CatchSignals goroutine (or any other)
-	g.mutex.Lock()
-	defer g.mutex.Unlock()
-	if g.stopping {
-		log.Printf("[%s] cannot start while shutting down\n", name)
-		return
-	}
-	g.services = append(g.services, svc)
-	g.wg.Add(1)
-	ctx, cancel := context.WithCancel(g.ctx)
-	sctx := &service{ctx: ctx, cancel: cancel, wg: &g.wg, svc: svc, name: name}
-	go func() {
-		defer func() {
-			if err := recover(); err != nil {
-				log.Printf("[%s] service crashed! error: %v\n", name, err)
-			}
-			log.Printf("[%s] service stopped.\n", name)
-			g.wg.Done()
-		}()
-		log.Printf("[%s] service starting.\n", name)
-		svc.Run(sctx)
-	}()
-}
-
-// CatchSignals installs signal handlers for Ctrl+C and other stop signals.
-// When a signal is received, Shutdown() is called.
-func (g *governor) CatchSignals() {
+func (g *governor) CatchSignals() Governor {
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP, syscall.SIGQUIT)
 	go func() {
@@ -131,10 +147,39 @@ func (g *governor) CatchSignals() {
 		log.Println("Shutdown requested via signal")
 		g.Shutdown()
 	}()
+	return g
 }
 
-// Shutdown stops all services and waits for them to stop.
-// This can be called from any goroutine.
+func (g *governor) Restart(after time.Duration) Governor {
+	g.delay = after
+	g.restart = true
+	return g
+}
+
+func (g *governor) Add(svc Service) ServiceConfig {
+	// protect against a race with Shutdown
+	g.mutex.Lock()
+	defer g.mutex.Unlock()
+	if g.stopping {
+		return &service{}
+	}
+	sctx := &service{g: g, svc: svc, delay: g.delay, restart: g.restart}
+	g.services = append(g.services, sctx)
+	return sctx
+}
+
+func (g *governor) Start() {
+	// protect against a race with Shutdown
+	g.mutex.Lock()
+	defer g.mutex.Unlock()
+	if g.stopping {
+		return
+	}
+	for _, svc := range g.services {
+		svc.Start()
+	}
+}
+
 func (g *governor) Shutdown() {
 	// protect against a race with CatchSignals() goroutine
 	g.mutex.Lock()
@@ -148,9 +193,8 @@ func (g *governor) Shutdown() {
 	log.Println("Beginning shutdown...")
 	g.cancel() // cancel all child contexts
 	for _, svc := range g.services {
-		// if the service has a Stop() function, call it.
-		// this is for things like closing network sockets to interrupt blocked reads/writes.
-		if stopper, ok := svc.(Stoppable); ok {
+		// if the service has a Stop() function, call it
+		if stopper, ok := svc.svc.(Stoppable); ok {
 			stopper.Stop()
 		}
 	}
@@ -158,20 +202,79 @@ func (g *governor) Shutdown() {
 	log.Println("Shutdown complete.")
 }
 
-// Wait for Governor to be shut down.
-// This is useful at the end of main() to wait for shutdown.
-// This can be called from any goroutine.
 func (g *governor) WaitForShutdown() {
 	g.wg.Wait()
 }
 
+func (g *governor) is_stopping() bool {
+	// protect against a race with Shutdown
+	g.mutex.Lock()
+	defer g.mutex.Unlock()
+	return g.stopping
+}
+
 // Service Context provides ServiceAPI for one service.
 type service struct {
-	ctx    context.Context // one per service (so we can stop/restart individual services)
-	cancel context.CancelFunc
-	wg     *sync.WaitGroup
-	svc    Service
-	name   string
+	g       *governor
+	ctx     context.Context // one per service (so we can stop/restart individual services)
+	cancel  context.CancelFunc
+	svc     Service
+	name    string
+	delay   time.Duration
+	restart bool
+}
+
+func (c *service) Name(name string) ServiceConfig {
+	c.name = name
+	return c
+}
+
+func (c *service) Restart(after time.Duration) ServiceConfig {
+	c.delay = after
+	c.restart = true
+	return c
+}
+
+func (c *service) NoRestart() ServiceConfig {
+	c.restart = false
+	return c
+}
+
+func (c *service) Start() {
+	if c.ctx != nil {
+		return // already running
+	}
+	g := c.g
+	g.wg.Add(1)
+	c.ctx, c.cancel = context.WithCancel(g.ctx)
+	go func() {
+		for {
+			c.service_run()
+			if !g.is_stopping() && c.restart {
+				log.Printf("[%s] service stopped, restarting in %v\n", c.name, c.delay)
+				c.Sleep(c.delay)
+			} else {
+				log.Printf("[%s] service stopped.\n", c.name)
+				g.wg.Done()
+				return
+			}
+		}
+	}()
+}
+
+func (c *service) service_run() {
+	defer func() {
+		if err := recover(); err != nil {
+			// don't log if the panic value is StopImmediate{}
+			if _, ok := err.(StopImmediate); ok {
+				log.Printf("[%s] raised stop-immediate.\n", c.name)
+			} else {
+				log.Printf("[%s] crashed! error: %v\n", c.name, err)
+			}
+		}
+	}()
+	log.Printf("[%s] service starting.\n", c.name)
+	c.svc.Run(c)
 }
 
 func (c *service) Context() context.Context { return c.ctx }
