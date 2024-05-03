@@ -6,6 +6,12 @@ Go Package `governor` provides a service management utility.
 import "github.com/raffecat/governor"
 ```
 
+### Installing
+
+```sh
+go get github.com/raffecat/governor@v0.1.0
+```
+
 ### Usage
 
 Using Governor is meant to be simple:
