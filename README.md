@@ -181,10 +181,10 @@ type Stoppable interface {
 	// service, after its Context is cancelled.
 	//
 	// NOTE: this will be called from a goroutine other than
-	//       the service goroutine (may need a sync.Mutex)
+	//       the service goroutine.
 	//
 	// NOTE: be aware that this can be called while your service
-	//       is starting up (i.e. around the time Run() is called!)
+	//       is starting (i.e. around the time Run() is called!)
 	//
 	// Stop can be used to e.g. close network sockets that the
 	// service might be blocking on (in Go, blocking network
