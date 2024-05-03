@@ -190,7 +190,7 @@ func (g *governor) Shutdown() {
 	g.stopping = true
 	g.mutex.Unlock()
 	// no need to hold the mutex below (Add calls are blocked)
-	log.Println("Beginning shutdown...")
+	log.Println("Beginning shutdown…")
 	g.cancel() // cancel all child contexts
 	for _, svc := range g.services {
 		// if the service has a Stop() function, call it
