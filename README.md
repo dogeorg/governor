@@ -9,7 +9,7 @@ import "github.com/raffecat/governor"
 ### Installing
 
 ```sh
-go get github.com/raffecat/governor@v0.1.0
+go get github.com/raffecat/governor@v0.1.1
 ```
 
 ### Usage
