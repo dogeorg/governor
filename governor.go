@@ -29,7 +29,7 @@ type Governor interface {
 	// Add a service to Governor.
 	// Returns a ServiceConfig interface to allow configuring and
 	// starting the service.
-	Add(svc Service) ServiceConfig
+	Add(name string, svc Service) ServiceConfig
 
 	// Start all added services.
 	// Does not affect services that have already been started.
@@ -48,9 +48,6 @@ type Governor interface {
 // ServiceConfig allows you to configure a service when adding
 // it to the Governor.
 type ServiceConfig interface {
-
-	// Configure the name of the service for errors and logging.
-	Name(name string) ServiceConfig
 
 	// Restart the service if it stops.
 	// The restart delay can be zero.
@@ -167,14 +164,14 @@ func (g *governor) Restart(after time.Duration) Governor {
 	return g
 }
 
-func (g *governor) Add(svc Service) ServiceConfig {
+func (g *governor) Add(name string, svc Service) ServiceConfig {
 	// protect against a race with Shutdown
 	g.mutex.Lock()
 	defer g.mutex.Unlock()
 	if g.stopping {
 		return &service{}
 	}
-	sctx := &service{g: g, svc: svc, delay: g.delay, restart: g.restart}
+	sctx := &service{g: g, svc: svc, delay: g.delay, restart: g.restart, name: name}
 	g.services = append(g.services, sctx)
 	return sctx
 }
