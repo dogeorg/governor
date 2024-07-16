@@ -1,6 +1,6 @@
 # Governor
 
-Go Package `governor` provides a service management utility.
+Go Package `governor` provides service management.
 
 ```go
 import "github.com/raffecat/governor"
