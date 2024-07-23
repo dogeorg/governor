@@ -1,3 +1,3 @@
-module ash.radicle.garden/z3iGsD9SQumb7dHQgwmfLQ6JTAK4X.git
+module code.dogecoin.org/governor
 
 go 1.6
