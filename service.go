@@ -59,10 +59,10 @@ type ServiceCtx struct {
 
 // private interface to allow governor to init the ServiceCtx
 type governorServiceCtxInit interface {
-	initServiceCtxFromGovernor(ctx context.Context, name string)
+	initGovernorServiceCtx(ctx context.Context, name string)
 }
 
-func (s *ServiceCtx) initServiceCtxFromGovernor(ctx context.Context, name string) {
+func (s *ServiceCtx) initGovernorServiceCtx(ctx context.Context, name string) {
 	s.Context = ctx
 	s.ServiceName = name
 }

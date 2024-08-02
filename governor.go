@@ -197,22 +197,26 @@ func (c *service) Start() {
 	g := c.g
 	g.wg.Add(1)
 	c.ctx, c.cancel = context.WithCancel(g.ctx)
-	go func() {
-		for {
-			c.service_run()
-			if !g.is_stopping() && c.restart {
-				log.Printf("[%s] service stopped, restarting in %v\n", c.name, c.delay)
-				c.sleep(c.delay)
-			} else {
-				log.Printf("[%s] service stopped.\n", c.name)
-				g.wg.Done()
-				return
-			}
-		}
-	}()
+	go c.service_goroutine(g)
 }
 
-func (c *service) service_run() {
+func (c *service) service_goroutine(g *governor) {
+	// keep restarting the service until shutdown.
+	for {
+		c.service_entry()
+		if !g.is_stopping() && c.restart {
+			log.Printf("[%s] service stopped, restarting in %v\n", c.name, c.delay)
+			c.sleep(c.delay)
+		} else {
+			log.Printf("[%s] service stopped.\n", c.name)
+			g.wg.Done()
+			return
+		}
+	}
+}
+
+func (c *service) service_entry() {
+	// run the service until it returns or panics, or until shutdown.
 	defer func() {
 		if err := recover(); err != nil {
 			// don't log if the panic value is StopImmediate{}
@@ -225,7 +229,7 @@ func (c *service) service_run() {
 	}()
 	log.Printf("[%s] service starting.\n", c.name)
 	if init, ok := c.svc.(governorServiceCtxInit); ok {
-		init.initServiceCtxFromGovernor(c.ctx, c.name)
+		init.initGovernorServiceCtx(c.ctx, c.name)
 	} else {
 		panic(fmt.Sprintf("[%s] bug: service does not embed governor.ServiceCtx", c.name))
 	}
