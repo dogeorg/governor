@@ -1,5 +1,7 @@
 # Governor
 
+This project is hosted on [radicle.xyz](https://radicle.xyz) at [rad:z3iGsD9SQumb7dHQgwmfLQ6JTAK4X](https://app.radicle.xyz/nodes/ash.radicle.garden/z3iGsD9SQumb7dHQgwmfLQ6JTAK4X)
+
 Go Package `governor` provides service management.
 
 ```go
