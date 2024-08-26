@@ -42,6 +42,10 @@ type Governor interface {
 	// Caveat: will return immediately if no services have been started.
 	// This can be useful at the end of main()
 	WaitForShutdown()
+
+	// GlobalContext gets a cancellable context for use outside of any service.
+	// This context will be canncelled when shutdown is requested.
+	GlobalContext() context.Context
 }
 
 // ServiceConfig allows you to configure a service when adding
@@ -154,6 +158,10 @@ func (g *governor) Shutdown() {
 
 func (g *governor) WaitForShutdown() {
 	g.wg.Wait()
+}
+
+func (g *governor) GlobalContext() context.Context {
+	return g.ctx
 }
 
 func (g *governor) is_stopping() bool {
