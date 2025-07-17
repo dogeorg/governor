@@ -1,3 +1,3 @@
-module code.dogecoin.org/governor
+module github.com/dogeorg/governor
 
-go 1.6
+go 1.8
