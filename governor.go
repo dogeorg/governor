@@ -32,7 +32,7 @@ type Governor interface {
 
 	// Start all added services.
 	// Does not affect services that have already been started.
-	Start()
+	Start() Governor
 
 	// Shutdown stops all services.
 	// This call blocks until all services have stopped.
@@ -46,6 +46,9 @@ type Governor interface {
 	// GlobalContext gets a cancellable context for use outside of any service.
 	// This context will be canncelled when shutdown is requested.
 	GlobalContext() context.Context
+
+	// Sleep blocks for 'duration', cancelled if GlobalContext() is cancelled.
+	Sleep(duration time.Duration) (cancelled bool)
 }
 
 // ServiceConfig allows you to configure a service when adding
@@ -122,16 +125,17 @@ func (g *governor) Add(name string, svc Service) ServiceConfig {
 	return sctx
 }
 
-func (g *governor) Start() {
+func (g *governor) Start() Governor {
 	// protect against a race with Shutdown
 	g.mutex.Lock()
 	defer g.mutex.Unlock()
 	if g.stopping {
-		return
+		return g
 	}
 	for _, svc := range g.services {
 		svc.Start()
 	}
+	return g
 }
 
 func (g *governor) Shutdown() {
@@ -162,6 +166,15 @@ func (g *governor) WaitForShutdown() {
 
 func (g *governor) GlobalContext() context.Context {
 	return g.ctx
+}
+
+func (g *governor) Sleep(duration time.Duration) (cancelled bool) {
+	select {
+	case <-g.ctx.Done(): // receive context cancel
+		return true
+	case <-time.After(duration):
+		return false
+	}
 }
 
 func (g *governor) is_stopping() bool {
