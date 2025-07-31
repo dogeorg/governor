@@ -49,6 +49,9 @@ type Governor interface {
 
 	// Sleep blocks for 'duration', cancelled if GlobalContext() is cancelled.
 	Sleep(duration time.Duration) (cancelled bool)
+
+	// Stopping returns true if GlobalContext() is cancelled.
+	Stopping() bool
 }
 
 // ServiceConfig allows you to configure a service when adding
@@ -175,6 +178,10 @@ func (g *governor) Sleep(duration time.Duration) (cancelled bool) {
 	case <-time.After(duration):
 		return false
 	}
+}
+
+func (g *governor) Stopping() bool {
+	return g.ctx.Err() != nil // cancelled
 }
 
 func (g *governor) is_stopping() bool {
