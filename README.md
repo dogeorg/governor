@@ -46,6 +46,25 @@ policy (this can be overridden when adding each service, or removed entirely.)
 Finally, at the end of main() we wait for all services to stop before exiting.
 Since we used CatchSignals() it will call Shutdown() for us when SIGINT is received.
 
+Example with dependancies.
+
+```go
+func main() {
+    gov := governor.New().CatchSignals().Restart(1 * time.Second)
+
+    gov.Add(serviceOne.New()).Name("service-one")
+
+    if something {
+        gov.Add(serviceTwo.New(args)).Name("service-two")
+    }
+
+    gov.Add(serviceThree.New(1)).Name("three-one").DependsOn("service-one")
+    gov.Add(serviceThree.New(2)).Name("three-two").DependsOn("service-one")
+
+    gov.StartWithReady(3 * time.Minute)
+    gov.WaitForShutdown()
+}
+```
 
 ### New
 
@@ -81,6 +100,14 @@ type Governor interface {
 	// Start all added services.
 	// Does not affect services that have already been started.
 	Start()
+
+	// Start all added services, then wait for all services that expose Ready()
+	// to become ready or until timeout elapses. If timeout <= 0, wait indefinitely.
+	StartWaitReady(timeout time.Duration) Governor
+
+	// WaitReady waits for a specific service's Ready() to close or until timeout.
+	// If the service does not expose Ready(), this returns true immediately.
+	WaitReady(name string, timeout time.Duration) bool
 
 	// Shutdown stops all services.
 	// This call blocks until all services have stopped.
