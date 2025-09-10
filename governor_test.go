@@ -10,11 +10,11 @@ import (
 	"gotest.tools/v3/assert"
 )
 
-var running []string = []string{}
 var mu sync.Mutex
 
 type FakeStore struct {
 	governor.ServiceCtx
+	LocalRunning chan string
 }
 
 func (fs *FakeStore) Run() {
@@ -24,16 +24,13 @@ func (fs *FakeStore) Run() {
 	fs.MarkReady()
 	mu.Lock()
 	defer mu.Unlock()
-	running = append(running, "store")
+	fs.LocalRunning <- "store"
 	fmt.Println("Started FakeStore")
 }
 
-func (fs *FakeStore) Stop() {
-
-}
-
 type FakeApp struct {
-	Name string
+	Name         string
+	LocalRunning chan string
 	governor.ServiceCtx
 }
 
@@ -42,34 +39,40 @@ func (fs *FakeApp) Run() {
 	fs.MarkReady()
 	mu.Lock()
 	defer mu.Unlock()
-	running = append(running, fs.Name)
+	fs.LocalRunning <- fs.Name
 	fmt.Println("Started FakeApp")
 }
 
-func (fs *FakeApp) Stop() {
-
-}
-
 func TestGovernor(t *testing.T) {
+	running := make(chan string)
 	gov := governor.New()
 
-	gov.Add("app2", &FakeApp{Name: "app2"}).DependsOn("store", "app")
-	gov.Add("app", &FakeApp{Name: "app"}).DependsOn("store")
-	gov.Add("store", &FakeStore{})
+	gov.Add("app2", &FakeApp{Name: "app2", LocalRunning: running})
+	gov.Add("app", &FakeApp{Name: "app", LocalRunning: running})
+	gov.Add("store", &FakeStore{LocalRunning: running})
 
 	gov.StartWaitReady(3 * time.Minute)
 
-	for {
-		if len(running) == 3 {
-			break
-		}
+	assert.Equal(t, <-running, "app2")
+	assert.Equal(t, <-running, "app")
+	assert.Equal(t, <-running, "store")
 
-		time.Sleep(1 * time.Second)
-	}
+	gov.WaitForShutdown()
+}
 
-	assert.Equal(t, running[0], "store")
-	assert.Equal(t, running[1], "app")
-	assert.Equal(t, running[2], "app2")
+func TestGovernorWithReady(t *testing.T) {
+	running := make(chan string)
+	gov := governor.New()
+
+	gov.Add("app2", &FakeApp{Name: "app2", LocalRunning: running}).DependsOn("store", "app")
+	gov.Add("app", &FakeApp{Name: "app", LocalRunning: running}).DependsOn("store")
+	gov.Add("store", &FakeStore{LocalRunning: running})
+
+	gov.StartWaitReady(3 * time.Minute)
+
+	assert.Equal(t, <-running, "store")
+	assert.Equal(t, <-running, "app")
+	assert.Equal(t, <-running, "app2")
 
 	gov.WaitForShutdown()
 }
